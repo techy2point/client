@@ -291,7 +291,7 @@ sudo ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
 echo '# Openvpn Configuration by techydev :)
 duplicate-cn
 dev tun
-port 443
+port 50501
 proto udp
 topology subnet
 server 10.30.0.0 255.255.252.0
@@ -663,6 +663,7 @@ iptables -t nat -A POSTROUTING -s 10.30.0.0/22 -o "$server_interface" -j MASQUER
 iptables -t nat -A POSTROUTING -s 10.30.0.0/22 -o "$server_interface" -j SNAT --to-source "$server_ip"
 iptables -t filter -A INPUT -p udp -m udp --dport 20100:20900 -m state --state NEW -m recent --update --seconds 30 --hitcount 10 --name DEFAULT --mask 255.255.255.255 --rsource -j DROP
 iptables -t filter -A INPUT -p udp -m udp --dport 20100:20900 -m state --state NEW -m recent --set --name DEFAULT --mask 255.255.255.255 --rsource
+iptables -A INPUT -p udp --dport 50501 -j ACCEPT
 iptables-save > /etc/iptables_rules.v4
 ip6tables-save > /etc/iptables_rules.v6
 sysctl -p
@@ -701,7 +702,7 @@ install_done()
   echo "OPENVPN SERVER FIRENET"
   echo "IP : $(curl -s https://api.ipify.org)"
   echo "OPENVPN TCP port : 1194"
-  echo "OPENVPN UDP port : 443"
+  echo "OPENVPN UDP port : 50501"
   echo "OPENVPN SSL port : 443"
   echo "SOCKS port : 80"
   echo "PROXY port : 3128"
