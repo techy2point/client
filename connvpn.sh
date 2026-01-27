@@ -711,9 +711,6 @@ install_done()
   echo
   history -c;
   rm /root/.installer
-  #echo "Server will secure this server and reboot after 20 seconds"
-  #sleep 20
-  #reboot
 }
 
 server_interface=$(ip route get 8.8.8.8 | awk '/dev/ {f=NR} f&&NR-1==f' RS=" ")
