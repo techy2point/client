@@ -338,7 +338,7 @@ echo '# Fixed Cert By techydev
       # Openvpn Configuration by Firenet Philippines :)
 	  duplicate-cn
       dev tun
-      port 1194
+      port 50501
       proto tcp
       topology subnet
       server 10.20.0.0 255.255.252.0
@@ -615,7 +615,7 @@ socket = r:TCP_NODELAY=1
 client = no
 
 [openvpn]
-connect = 127.0.0.1:1194
+connect = 127.0.0.1:50501
 accept = 443" >> stunnel.conf
 
 cd /etc/default && rm stunnel4
@@ -701,7 +701,7 @@ install_done()
   clear
   echo "OPENVPN SERVER FIRENET"
   echo "IP : $(curl -s https://api.ipify.org)"
-  echo "OPENVPN TCP port : 1194"
+  echo "OPENVPN TCP port : 50501"
   echo "OPENVPN UDP port : 50501"
   echo "OPENVPN SSL port : 443"
   echo "SOCKS port : 80"
