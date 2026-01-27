@@ -389,7 +389,7 @@ AUTH_URL="https://connvpn.online/database/api/auth.php"       # authentication
 CONNECT_URL="https://connvpn.online/database/api/connect.php" # user connect tracking
 DISCONNECT_URL="https://connvpn.online/database/api/disconnect.php" # user disconnect tracking
 EOM
-
+ 
 sed -i "s|DBHOST|$HOST|g" /etc/openvpn/login/config.sh
 sed -i "s|DBUSER|$USER|g" /etc/openvpn/login/config.sh
 sed -i "s|DBPASS|$PASS|g" /etc/openvpn/login/config.sh
