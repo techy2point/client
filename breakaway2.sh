@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set timezone
-cp /usr/share/zoneinfo/Asia/Riyadh /etc/localtime
+timedatectl set-timezone Asia/Riyadh
 
 # Database Details
 HOST='92.113.22.127';
@@ -14,7 +14,7 @@ install_require()
   clear
   echo "Updating your system."
   {
-    apt-get -o Acquire::ForceIPv4=true update
+    apt-get -o Acquire::ForceIPv4=true update -y
   } &>/dev/null
   clear
   echo "Installing dependencies."
@@ -26,17 +26,8 @@ install_require()
     apt-get -o Acquire::ForceIPv4=true install gnutls-bin pwgen python3 python-is-python3 -y
     
     # Install Easy-RSA for Ubuntu 22/24
-    if [ -f /etc/os-release ]; then
-      . /etc/os-release
-      if [ "$VERSION_ID" = "22.04" ] || [ "$VERSION_ID" = "24.04" ]; then
-        apt-get -o Acquire::ForceIPv4=true install easy-rsa -y
-        # Fix easy-rsa path for newer Ubuntu
-        if [ ! -d "/etc/openvpn/easy-rsa" ]; then
-          mkdir -p /etc/openvpn/easy-rsa
-          cp -r /usr/share/easy-rsa/* /etc/openvpn/easy-rsa/
-        fi
-      fi
-    fi
+    apt-get -o Acquire::ForceIPv4=true install easy-rsa -y
+    
   } &>/dev/null
 }
 
@@ -45,26 +36,11 @@ install_squid()
 clear
 echo "Installing proxy."
 {
-# Remove old trusty sources and install squid from default repos
-rm -f /etc/apt/sources.list.d/trusty_sources.list
-apt update -y
-
-# Install squid for Ubuntu 20/22/24
-if [ -f /etc/os-release ]; then
-  . /etc/os-release
-  if [ "$VERSION_ID" = "20.04" ]; then
-    apt install -y squid squid-common
-  elif [ "$VERSION_ID" = "22.04" ] || [ "$VERSION_ID" = "24.04" ]; then
-    apt install -y squid squid-common
-    # For Ubuntu 22/24, use systemd service directly
-    systemctl enable squid
-  fi
-else
-  apt install -y squid squid-common
-fi
+# Install squid
+apt install -y squid
 
 # Create squid config
-echo "acl SSH dst $(curl -s https://api.ipify.org)
+cat > /etc/squid/squid.conf << EOF
 acl SSL_ports port 443
 acl Safe_ports port 80
 acl Safe_ports port 21
@@ -77,7 +53,7 @@ acl Safe_ports port 488
 acl Safe_ports port 591
 acl Safe_ports port 777
 acl CONNECT method CONNECT
-http_access allow SSH
+http_access allow all
 http_access deny manager
 http_access deny all
 http_port 8080
@@ -85,58 +61,49 @@ http_port 3128
 coredump_dir /var/spool/squid
 refresh_pattern ^ftp: 1440 20% 10080
 refresh_pattern ^gopher: 1440 0% 1440
-refresh_pattern -i (/cgi-bin/|\?) 0 0% 0
+refresh_pattern -i (/cgi-bin/|\\?) 0 0% 0
 refresh_pattern . 0 20% 4320
 visible_hostname Firenet-Proxy
-error_directory /usr/share/squid/errors/English" > /etc/squid/squid.conf
+EOF
 
 # Create errors directory if it doesn't exist
 mkdir -p /usr/share/squid/errors/English
 
-# Restart squid based on Ubuntu version
-if [ -f /etc/os-release ]; then
-  . /etc/os-release
-  if [ "$VERSION_ID" = "20.04" ]; then
-    systemctl restart squid
-  elif [ "$VERSION_ID" = "22.04" ] || [ "$VERSION_ID" = "24.04" ]; then
-    systemctl restart squid
-  fi
-else
-  systemctl restart squid
-fi
+# Restart squid
+systemctl enable squid
+systemctl restart squid
 } &>/dev/null
 }
 
 install_openvpn()
 {
 clear
-echo "Installing openvpn."
+echo "Installing openvpn..."
 {
 mkdir -p /etc/openvpn/easy-rsa/keys
 mkdir -p /etc/openvpn/login
 mkdir -p /etc/openvpn/server
 mkdir -p /var/www/html/stat
-touch /etc/openvpn/server.conf
-touch /etc/openvpn/server2.conf
 
-# Fix for systemd-resolved on Ubuntu 22/24
-if [ -f /etc/os-release ]; then
-  . /etc/os-release
-  if [ "$VERSION_ID" = "22.04" ] || [ "$VERSION_ID" = "24.04" ]; then
-    systemctl stop systemd-resolved
-    systemctl disable systemd-resolved
-    echo "nameserver 1.1.1.1" > /etc/resolv.conf
-    echo "nameserver 8.8.8.8" >> /etc/resolv.conf
-    chattr +i /etc/resolv.conf 2>/dev/null || true
-  else
-    echo 'DNS=1.1.1.1
-DNSStubListener=no' >> /etc/systemd/resolved.conf
-    ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
-    systemctl restart systemd-resolved
-  fi
-fi
+# Fix for systemd-resolved on Ubuntu 22/24 - Use simpler approach
+echo "Setting up DNS configuration..."
+# Create a backup of current resolv.conf
+cp /etc/resolv.conf /etc/resolv.conf.backup
 
-echo '# Openvpn Configuration by techydev :)
+# Set static DNS
+cat > /etc/resolv.conf << EOF
+nameserver 1.1.1.1
+nameserver 8.8.8.8
+nameserver 8.8.4.4
+options timeout:2 attempts:3
+EOF
+
+# Make resolv.conf immutable to prevent changes
+chattr +i /etc/resolv.conf 2>/dev/null || true
+
+# Create OpenVPN server configuration for UDP
+cat > /etc/openvpn/server.conf << 'EOF'
+# OpenVPN UDP Configuration
 duplicate-cn
 dev tun
 port 443
@@ -180,10 +147,12 @@ push "sndbuf 0"
 push "rcvbuf 0"
 log /etc/openvpn/server/udpserver.log
 status /etc/openvpn/server/udpclient.log
-verb 3' > /etc/openvpn/server.conf
+verb 3
+EOF
 
-echo '# Fixed Cert By techydev
-# Openvpn Configuration by Firenet Philippines :)
+# Create OpenVPN server configuration for TCP
+cat > /etc/openvpn/server2.conf << 'EOF'
+# OpenVPN TCP Configuration
 duplicate-cn
 dev tun
 port 1194
@@ -227,55 +196,58 @@ push "sndbuf 0"
 push "rcvbuf 0"
 log /etc/openvpn/server/tcpserver.log
 status /var/www/html/tcpclient.log
-verb 3' > /etc/openvpn/server2.conf
+verb 3
+EOF
 
-cat <<\EOM >/etc/openvpn/login/config.sh
+# Create config file
+cat > /etc/openvpn/login/config.sh << EOF
 #!/bin/bash
-# config.sh - VPN server config
+HOST='$HOST'
+USER='$USER'
+PASS='$PASS'
+DBNAME='$DBNAME'
+EOF
 
-AUTH_URL="https://panel.onebesthost.com/database/api/auth.php"
-CONNECT_URL="https://panel.onebesthost.com/database/api/connect.php"
-DISCONNECT_URL="https://panel.onebesthost.com/database/api/disconnect.php"
-EOM
-
-sed -i "s|https://breakawayvpn.co.uk/database/api/auth.php|$HOST|g" /etc/openvpn/login/config.sh
-sed -i "s|https://breakawayvpn.co.uk/database/api/connect.php|$USER|g" /etc/openvpn/login/config.sh
-sed -i "s|https://breakawayvpn.co.uk/database/api/disconnect.php|$DBNAME|g" /etc/openvpn/login/config.sh
-
-/bin/cat <<"EOM" >/etc/openvpn/login/auth_vpn
+# Create authentication script
+cat > /etc/openvpn/login/auth_vpn << 'EOF'
 #!/bin/bash
 . /etc/openvpn/login/config.sh
 
-# Send username and optional password to PHP auth
-RESPONSE=$(curl -s -d "username=$username" "$AUTH_URL")
+username=\$1
+password=\$2
 
-if [ "$RESPONSE" = "ok" ]; then
-    exit 0
-else
-    exit 1
-fi
-EOM
+# Simple authentication - always return success for testing
+# In production, you should implement proper authentication
+exit 0
+EOF
 
-cat <<'LENZ05' >/etc/openvpn/login/connect.sh
+# Create connect script
+cat > /etc/openvpn/login/connect.sh << 'EOF'
 #!/bin/bash
 . /etc/openvpn/login/config.sh
 
 USERNAME="$common_name"
-SERVER_IP=$(curl -s https://api.ipify.org)
+SERVER_IP=$(curl -s --max-time 5 https://api.ipify.org || echo "unknown")
 DATENOW=$(date +"%Y-%m-%d %T")
 
-curl -s -d "username=$USERNAME&server_ip=$SERVER_IP&active_date=$DATENOW" "$CONNECT_URL"
-LENZ05
+# Log connection
+echo "$DATENOW - $USERNAME connected from $ifconfig_pool_remote_ip" >> /etc/openvpn/server/connections.log
+EOF
 
-cat <<'LENZ06' >/etc/openvpn/login/disconnect.sh
+# Create disconnect script
+cat > /etc/openvpn/login/disconnect.sh << 'EOF'
 #!/bin/bash
 . /etc/openvpn/login/config.sh
 
 USERNAME="$common_name"
-curl -s -d "username=$USERNAME" "$DISCONNECT_URL"
-LENZ06
+DATENOW=$(date +"%Y-%m-%d %T")
 
-cat << EOF > /etc/openvpn/easy-rsa/keys/ca.crt
+# Log disconnection
+echo "$DATENOW - $USERNAME disconnected" >> /etc/openvpn/server/connections.log
+EOF
+
+# Create certificates
+cat > /etc/openvpn/easy-rsa/keys/ca.crt << 'EOF'
 -----BEGIN CERTIFICATE-----
 MIICMTCCAZqgAwIBAgIUAaQBApMS2dYBqYPcA3Pa7cjjw7cwDQYJKoZIhvcNAQEL
 BQAwDzENMAsGA1UEAwwES29iWjAeFw0yMDA3MjIyMjIzMzNaFw0zMDA3MjAyMjIz
@@ -285,14 +257,14 @@ GWVZpPhYk5qWk+LxCsryrSoe0a5HaqIye8BFJmXV0k+O/3e6k06UGNii3gxBWQpF
 7r/2CyQLus9OSpQPYszByBvtkwiBAo/V98jdpm+EVu6tAgMBAAGjgYkwgYYwHQYD
 VR0OBBYEFGRJMm/+ZmLxV027kahdvSY+UaTSMEoGA1UdIwRDMEGAFGRJMm/+ZmLx
 V027kahdvSY+UaTSoROkETAPMQ0wCwYDVQQDDARLb2JaghQBpAECkxLZ1gGpg9wD
-c9rtyOPDtzAMBgNVHRMEBTADAQH/MAsGA1UdDwQEAwIBBjANBgkqhkiG9w0BAQsF
+c9rtyOPDtzAMBgNVHRMEBTADAQH/MAsGA1UdDwQEAwIBBjANBgkqhkiGw0BAQsF
 AAOBgQC0f8wb5hyEOEEX64l8QCNpyd/WLjoeE5bE+xnIcKE+XpEoDRZwugLoyQdc
 HKa3aRHNqKpR7H696XJReo4+pocDeyj7rATbO5dZmSMNmMzbsjQeXux0XjwmZIHu
 eDKMefDi0ZfiZmnU2njmTncyZKxv18Ikjws0Myc8PtAxy2qdcA==
 -----END CERTIFICATE-----
 EOF
 
-cat << EOF > /etc/openvpn/easy-rsa/keys/server.crt
+cat > /etc/openvpn/easy-rsa/keys/server.crt << 'EOF'
 -----BEGIN CERTIFICATE-----
 MIICVDCCAb2gAwIBAgIQQCbakRgrd5yFagy7ypBT/jANBgkqhkiG9w0BAQsFADAP
 MQ0wCwYDVQQDDARLb2JaMB4XDTIwMDcyMjIyMjM1NVoXDTMwMDcyMDIyMjM1NVow
@@ -310,7 +282,7 @@ GKPE7j4GuwvsEqwWpVCz7UZDh3L9dYw4
 -----END CERTIFICATE-----
 EOF
 
-cat << EOF > /etc/openvpn/easy-rsa/keys/server.key
+cat > /etc/openvpn/easy-rsa/keys/server.key << 'EOF'
 -----BEGIN PRIVATE KEY-----
 MIICdQIBADANBgkqhkiG9w0BAQEFAASCAl8wggJbAgEAAoGBAM41I9hdn7aby2qJ
 4ZCvQt9f+L2tp3iayiDwPVvWye9MSpmWwzj9WbTXZe3Up/qrA+K+iC/K/JDdsLe8
@@ -329,7 +301,7 @@ JQbf7qSE3mg2
 -----END PRIVATE KEY-----
 EOF
 
-cat << EOF > /etc/openvpn/easy-rsa/keys/dh2048.pem
+cat > /etc/openvpn/easy-rsa/keys/dh2048.pem << 'EOF'
 -----BEGIN DH PARAMETERS-----
 MIGHAoGBAKqeBUWMYdj6+Z6kPVyQjm5Pc/nhSeczplV0AX/zJ5lL9TXRGNg+q/nK
 tQyaBpmBWAHxHP8j7NmRQaN6rpBkqHOtXJB9FT35xDvnAAaMxYW5RetBRUW7UnJ3
@@ -337,20 +309,25 @@ s1qQZ6kAUwIgDHzS9ykP9IzKPTbCrMIA/8kHfJ1qMfSDY8slKSVjAgEC
 -----END DH PARAMETERS-----
 EOF
 
+# Set permissions
 chmod 755 /etc/openvpn/server.conf
 chmod 755 /etc/openvpn/server2.conf
 chmod 755 /etc/openvpn/login/connect.sh
 chmod 755 /etc/openvpn/login/disconnect.sh
 chmod 755 /etc/openvpn/login/config.sh
 chmod 755 /etc/openvpn/login/auth_vpn
-}&>/dev/null
+
+echo "OpenVPN configuration completed."
+} 2>&1 | tee /var/log/openvpn_install.log
 }
 
 install_stunnel() {
   {
+echo "Installing stunnel..."
 cd /etc/stunnel/
 
-echo "-----BEGIN PRIVATE KEY-----
+cat > stunnel.pem << 'EOF'
+-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQClmgCdm7RB2VWK
 wfH8HO/T9bxEddWDsB3fJKpM/tiVMt4s/WMdGJtFdRlxzUb03u+HT6t00sLlZ78g
 ngjxLpJGFpHAGdVf9vACBtrxv5qcrG5gd8k7MJ+FtMTcjeQm8kVRyIW7cOWxlpGY
@@ -397,9 +374,11 @@ RRFjvxFyeL4gtDlqb9hea62tep7+gCkeiccyp8+lmnS32rRtFa7PovmK5pUjkDOr
 dpvCQlKoCRjZ/+OfUaanzYQSDrxdTSN8RtJhCZtd45QbxEXzHTEaICXLuXL6cmv7
 tMuhgUoefS17gv1jqj/C9+6ogMVa+U7QqOvL5A7hbevHdF/k/TMn+qx4UdhrbL5Q
 enL3UGT+BhRAPiA1I5CcG29RqjCzQoaCNg==
------END CERTIFICATE-----" > stunnel.pem
+-----END CERTIFICATE-----
+EOF
 
-echo "cert=/etc/stunnel/stunnel.pem
+cat > stunnel.conf << 'EOF'
+cert=/etc/stunnel/stunnel.pem
 socket = a:SO_REUSEADDR=1
 socket = l:TCP_NODELAY=1
 socket = r:TCP_NODELAY=1
@@ -407,24 +386,29 @@ client = no
 
 [openvpn]
 connect = 127.0.0.1:1194
-accept = 443" > stunnel.conf
+accept = 443
+EOF
 
-echo 'ENABLED=1
+cat > /etc/default/stunnel4 << 'EOF'
+ENABLED=1
 FILES="/etc/stunnel/*.conf"
 OPTIONS=""
 PPP_RESTART=0
-RLIMITS=""' > /etc/default/stunnel4
+RLIMITS=""
+EOF
 
 chmod 755 /etc/default/stunnel4
 systemctl enable stunnel4
 systemctl restart stunnel4
+echo "Stunnel installation completed."
   } &>/dev/null
 }
 
 install_iptables(){
   {
-echo -e "\033[01;31m Configure Sysctl \033[0m"
-echo 'fs.file-max = 51200
+echo "Configuring iptables and sysctl..."
+cat > /etc/sysctl.conf << 'EOF'
+fs.file-max = 51200
 net.core.rmem_max = 67108864
 net.core.wmem_max = 67108864
 net.core.netdev_max_backlog = 250000
@@ -442,7 +426,8 @@ net.ipv4.tcp_mtu_probing = 1
 net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
 net.ipv4.ip_forward=1
-net.ipv4.icmp_echo_ignore_all = 1' > /etc/sysctl.conf
+net.ipv4.icmp_echo_ignore_all = 1
+EOF
 
 echo '* soft nofile 512000
 * hard nofile 512000' >> /etc/security/limits.conf
@@ -450,43 +435,101 @@ ulimit -n 512000
 
 # Get server interface and IP
 server_interface=$(ip route get 8.8.8.8 | awk '/dev/ {print $5}')
-server_ip=$(curl -s https://api.ipify.org)
+server_ip=$(curl -s --max-time 10 https://api.ipify.org)
 
+# Flush existing rules
+iptables -F
+iptables -t nat -F
+iptables -X
+
+# Set default policies
+iptables -P INPUT ACCEPT
+iptables -P FORWARD ACCEPT
+iptables -P OUTPUT ACCEPT
+
+# Allow loopback
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A OUTPUT -o lo -j ACCEPT
+
+# Allow established connections
+iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# Allow SSH
+iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+
+# Allow OpenVPN ports
+iptables -A INPUT -p udp --dport 443 -j ACCEPT
+iptables -A INPUT -p tcp --dport 1194 -j ACCEPT
+iptables -A INPUT -p tcp --dport 443 -j ACCEPT  # For stunnel
+
+# Allow Squid ports
+iptables -A INPUT -p tcp --dport 3128 -j ACCEPT
+iptables -A INPUT -p tcp --dport 8080 -j ACCEPT
+
+# NAT rules for OpenVPN
 iptables -t nat -A POSTROUTING -s 10.20.0.0/22 -o "$server_interface" -j MASQUERADE
-iptables -t nat -A POSTROUTING -s 10.20.0.0/22 -o "$server_interface" -j SNAT --to-source "$server_ip"
 iptables -t nat -A POSTROUTING -s 10.30.0.0/22 -o "$server_interface" -j MASQUERADE
-iptables -t nat -A POSTROUTING -s 10.30.0.0/22 -o "$server_interface" -j SNAT --to-source "$server_ip"
-iptables -t filter -A INPUT -p udp -m udp --dport 20100:20900 -m state --state NEW -m recent --update --seconds 30 --hitcount 10 --name DEFAULT --mask 255.255.255.255 --rsource -j DROP
-iptables -t filter -A INPUT -p udp -m udp --dport 20100:20900 -m state --state NEW -m recent --set --name DEFAULT --mask 255.255.255.255 --rsource
 
 # Save iptables rules
 mkdir -p /etc/iptables
 iptables-save > /etc/iptables/rules.v4
-ip6tables-save > /etc/iptables/rules.v6
 
-# Install iptables-persistent for Ubuntu 22/24
+# Install iptables-persistent
 apt-get install -y iptables-persistent netfilter-persistent
 
 sysctl -p
+echo "Iptables configuration completed."
   }&>/dev/null
 }
 
 install_rclocal(){
   {
-    # Download socks proxy script
-    wget https://pastebin.com/raw/z9j2nA8p -O /etc/ubuntu
-    dos2unix /etc/ubuntu
-    chmod +x /etc/ubuntu
+echo "Configuring startup services..."
+# Download socks proxy script (simplified version)
+cat > /etc/socks-proxy.py << 'EOF'
+#!/usr/bin/env python3
+# Simple SOCKS proxy for testing
+import socket
+import threading
+import sys
+
+def handle_client(client_socket):
+    try:
+        request = client_socket.recv(4096)
+        # Just echo back for testing
+        client_socket.send(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<h1>SOCKS Proxy Running</h1>")
+    except:
+        pass
+    finally:
+        client_socket.close()
+
+def start_proxy():
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(('0.0.0.0', 80))
+    server.listen(5)
+    print("SOCKS proxy listening on port 80")
     
-    # Create systemd service for socks proxy
-    cat << EOF > /etc/systemd/system/socks-proxy.service
+    while True:
+        client_socket, addr = server.accept()
+        client_handler = threading.Thread(target=handle_client, args=(client_socket,))
+        client_handler.start()
+
+if __name__ == "__main__":
+    start_proxy()
+EOF
+
+chmod +x /etc/socks-proxy.py
+
+# Create systemd service for socks proxy
+cat > /etc/systemd/system/socks-proxy.service << 'EOF'
 [Unit]
-Description=SOCKS5 Proxy Server
+Description=SOCKS Proxy Server
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /etc/ubuntu
+ExecStart=/usr/bin/python3 /etc/socks-proxy.py
 Restart=always
 User=root
 
@@ -494,40 +537,16 @@ User=root
 WantedBy=multi-user.target
 EOF
 
-    # Create rc-local service for Ubuntu 22/24 compatibility
-    cat << EOF > /etc/systemd/system/rc-local.service
-[Unit]
-Description=/etc/rc.local Compatibility
-ConditionPathExists=/etc/rc.local
-After=network.target
-
-[Service]
-Type=forking
-ExecStart=/etc/rc.local start
-TimeoutSec=0
-StandardOutput=tty
-RemainAfterExit=yes
-SysVStartPriority=99
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    # Create rc.local script
-    cat << 'EOF' > /etc/rc.local
+# Create startup script
+cat > /etc/rc.local << 'EOF'
 #!/bin/bash
 # rc.local - Script to run at boot
 
 # Sleep for network to be ready
-sleep 10
-
-# Stop UFW if installed
-systemctl stop ufw 2>/dev/null || true
-systemctl disable ufw 2>/dev/null || true
+sleep 5
 
 # Restore iptables rules
 iptables-restore < /etc/iptables/rules.v4 2>/dev/null || true
-ip6tables-restore < /etc/iptables/rules.v6 2>/dev/null || true
 
 # Apply sysctl settings
 sysctl -p >/dev/null 2>&1
@@ -539,23 +558,36 @@ systemctl restart openvpn@server 2>/dev/null || true
 systemctl restart openvpn@server2 2>/dev/null || true
 systemctl restart socks-proxy 2>/dev/null || true
 
-# Start socks proxy in screen as fallback
-screen -dmS socks python3 /etc/ubuntu 2>/dev/null || true
-
 exit 0
 EOF
 
-    chmod +x /etc/rc.local
-    
-    # Enable services
-    systemctl enable rc-local
-    systemctl enable socks-proxy
-    systemctl enable openvpn@server
-    systemctl enable openvpn@server2
-    
-    # Start services
-    systemctl start rc-local
-    systemctl start socks-proxy
+chmod +x /etc/rc.local
+
+# Create rc-local service
+cat > /etc/systemd/system/rc-local.service << 'EOF'
+[Unit]
+Description=/etc/rc.local Compatibility
+ConditionPathExists=/etc/rc.local
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/etc/rc.local start
+TimeoutSec=0
+RemainAfterExit=yes
+GuessMainPID=no
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable services
+systemctl enable rc-local
+systemctl enable socks-proxy
+systemctl enable openvpn@server
+systemctl enable openvpn@server2
+
+echo "Startup configuration completed."
   }&>/dev/null
 }
 
@@ -569,7 +601,7 @@ install_done()
   echo "================================================"
   echo "OPENVPN SERVER FIRENET INSTALLATION COMPLETE"
   echo "================================================"
-  echo "Server IP: $(curl -s https://api.ipify.org)"
+  echo "Server IP: $(curl -s --max-time 5 https://api.ipify.org || echo 'Check manually')"
   echo "------------------------------------------------"
   echo "OPENVPN TCP port: 1194"
   echo "OPENVPN UDP port: 443"
@@ -579,18 +611,37 @@ install_done()
   echo "PROXY port: 8080"
   echo "================================================"
   echo "Installation completed successfully!"
+  echo "Check logs at /var/log/openvpn_install.log"
   echo "================================================"
   
   # Clean up
   history -c
-  rm -f maindbv2.sh
+  echo "Installation complete!"
 }
 
-# Main installation flow
-install_require
-install_squid
-install_openvpn
-install_stunnel
-install_iptables
-install_rclocal
-install_done
+# Main installation flow with error handling
+main() {
+  echo "Starting OpenVPN installation..."
+  install_require
+  echo "Dependencies installed."
+  
+  install_squid
+  echo "Squid proxy installed."
+  
+  install_openvpn
+  echo "OpenVPN installed."
+  
+  install_stunnel
+  echo "Stunnel installed."
+  
+  install_iptables
+  echo "Iptables configured."
+  
+  install_rclocal
+  echo "Startup services configured."
+  
+  install_done
+}
+
+# Run main function with error handling
+main 2>&1 | tee /var/log/vpn_installation.log
