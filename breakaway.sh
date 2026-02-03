@@ -1,4 +1,23 @@
 #!/bin/bash
+
+# Debug function
+debug_info() {
+    echo "=== DEBUG INFO ==="
+    echo "Server IP: $(curl -s https://api.ipify.org)"
+    echo "Server Interface: $(ip route get 8.8.8.8 | awk '/dev/ {f=NR} f&&NR-1==f' RS=" ")"
+    echo "OpenVPN TCP Config: /etc/openvpn/server2.conf"
+    echo "=== Checking Services ==="
+    systemctl status openvpn-server@server2.service --no-pager -l
+    echo "=== Checking Listening Ports ==="
+    netstat -tlnp | grep -E '(1194|443)' || echo "No ports found"
+    netstat -ulnp | grep 443 || echo "No UDP 443 found"
+    echo "=== Checking OpenVPN Processes ==="
+    ps aux | grep openvpn | grep -v grep
+    echo "=== Checking iptables ==="
+    iptables -L -n | grep 1194 || echo "No iptables rule for 1194"
+    echo "=== END DEBUG ==="
+}
+
 install_require()
 {
   clear
@@ -281,7 +300,9 @@ echo 'DNS=1.1.1.1
 DNSStubListener=no' >> /etc/systemd/resolved.conf
 sudo ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
 
-echo '# Openvpn Configuration by techydev :)
+# UDP Server Config (port 443)
+cat > /etc/openvpn/server.conf << 'EOF'
+# Openvpn Configuration by techydev :)
 duplicate-cn
 dev tun
 port 443
@@ -316,7 +337,7 @@ max-clients 1024
 client-connect /etc/openvpn/login/connect.sh
 client-disconnect /etc/openvpn/login/disconnect.sh
 ifconfig-pool-persist /etc/openvpn/server/ip_udp.txt
-auth-user-pass-verify "/etc/openvpn/login/auth_vpn" via-env # 
+auth-user-pass-verify "/etc/openvpn/login/auth_vpn" via-env
 push "persist-key"
 push "persist-tun"
 push "dhcp-option DNS 8.8.8.8"
@@ -325,68 +346,76 @@ push "sndbuf 0"
 push "rcvbuf 0"
 log /etc/openvpn/server/udpserver.log
 status /etc/openvpn/server/udpclient.log
-verb 3' > /etc/openvpn/server.conf
+verb 3
+EOF
 
-echo '# Fixed Cert By techydev
-      # Openvpn Configuration by Firenet Philippines :)
-	  duplicate-cn
-      dev tun
-      port 1194
-      proto tcp
-      topology subnet
-      server 10.20.0.0 255.255.252.0
-      ca /etc/openvpn/easy-rsa/keys/ca.crt
-      cert /etc/openvpn/easy-rsa/keys/server.crt
-      key /etc/openvpn/easy-rsa/keys/server.key
-      dh none
-      tls-server
-      tls-version-min 1.2
-      tls-cipher TLS-ECDHE-RSA-WITH-AES-128-GCM-SHA256
-      cipher none
-      ncp-disable
-      auth none
-      sndbuf 0
-      rcvbuf 0
-      keepalive 10 120
-      persist-key
-      persist-tun
-      ping-timer-rem
-      reneg-sec 0
-      user nobody
-      group nogroup
-      client-to-client
-      username-as-common-name
-      verify-client-cert none
-      client-cert-not-required
-      script-security 2
-      max-clients 1024
-      client-connect /etc/openvpn/login/connect.sh
-      client-disconnect /etc/openvpn/login/disconnect.sh
-      ifconfig-pool-persist /etc/openvpn/server/ip_tcp.txt
-      auth-user-pass-verify "/etc/openvpn/login/auth_vpn" via-env #
-      push "persist-key"
-      push "persist-tun"
-      push "dhcp-option DNS 8.8.8.8"
-      push "redirect-gateway def1 bypass-dhcp"
-      push "sndbuf 0"
-      push "rcvbuf 0"
-      log /etc/openvpn/server/tcpserver.log
-      status /var/www/html/tcpclient.log
-      verb 3' > /etc/openvpn/server2.conf
+# TCP Server Config (port 1194) - FIXED VERSION
+cat > /etc/openvpn/server2.conf << 'EOF'
+# Fixed OpenVPN TCP Configuration
+# Listening on all interfaces for port 1194
+port 1194
+proto tcp
+dev tun
+topology subnet
+server 10.20.0.0 255.255.252.0
+ca /etc/openvpn/easy-rsa/keys/ca.crt
+cert /etc/openvpn/easy-rsa/keys/server.crt
+key /etc/openvpn/easy-rsa/keys/server.key
+dh none
+tls-server
+tls-version-min 1.2
+tls-cipher TLS-ECDHE-RSA-WITH-AES-128-GCM-SHA256
+cipher none
+ncp-disable
+auth none
+sndbuf 0
+rcvbuf 0
+keepalive 10 120
+persist-key
+persist-tun
+ping-timer-rem
+reneg-sec 0
+user nobody
+group nogroup
+client-to-client
+username-as-common-name
+verify-client-cert none
+client-cert-not-required
+script-security 3
+max-clients 1024
+client-connect /etc/openvpn/login/connect.sh
+client-disconnect /etc/openvpn/login/disconnect.sh
+ifconfig-pool-persist /etc/openvpn/server/ip_tcp.txt
+auth-user-pass-verify "/etc/openvpn/login/auth_vpn" via-env
+push "persist-key"
+push "persist-tun"
+push "dhcp-option DNS 8.8.8.8"
+push "redirect-gateway def1 bypass-dhcp"
+push "sndbuf 0"
+push "rcvbuf 0"
+log /etc/openvpn/server/tcpserver.log
+status /var/www/html/tcpclient.log
+verb 3
+explicit-exit-notify 0
+EOF
 
-# Create OpenVPN service files
-cat > /etc/systemd/system/openvpn-server@.service << EOF
+# Create Systemd Service Files
+cat > /lib/systemd/system/openvpn-server@.service << 'EOF'
 [Unit]
 Description=OpenVPN service for %i
 After=network.target
+Wants=network-online.target
+Documentation=man:openvpn(8)
+Documentation=https://community.openvpn.net/openvpn/wiki/Openvpn24ManPage
+Documentation=https://community.openvpn.net/openvpn/wiki/HOWTO
 
 [Service]
 Type=notify
 PrivateTmp=true
 WorkingDirectory=/etc/openvpn
-ExecStart=/usr/sbin/openvpn --status /run/openvpn/%i.status 10 --cd /etc/openvpn --config /etc/openvpn/%i.conf --writepid /run/openvpn/%i.pid
-ExecReload=/bin/kill -HUP \$MAINPID
-CapabilityBoundingSet=CAP_IPC_LOCK CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_SETGID CAP_SETUID CAP_SYS_CHROOT CAP_DAC_OVERRIDE
+ExecStart=/usr/sbin/openvpn --daemon ovpn-%i --status /run/openvpn/%i.status 10 --cd /etc/openvpn --script-security 2 --config /etc/openvpn/%i.conf --writepid /run/openvpn/%i.pid
+ExecReload=/bin/kill -HUP $MAINPID
+CapabilityBoundingSet=CAP_IPC_LOCK CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_SETGID CAP_SETUID CAP_SYS_CHROOT CAP_DAC_OVERRIDE CAP_AUDIT_WRITE
 LimitNPROC=10
 DeviceAllow=/dev/null rw
 DeviceAllow=/dev/net/tun rw
@@ -400,60 +429,11 @@ Restart=on-failure
 WantedBy=multi-user.target
 EOF
 
-cat > /etc/systemd/system/openvpn-server@server.service << EOF
-[Unit]
-Description=OpenVPN server for UDP 443
-After=network.target
+# Create symbolic links for our configs
+ln -sf /etc/openvpn/server.conf /etc/openvpn/server
+ln -sf /etc/openvpn/server2.conf /etc/openvpn/server2
 
-[Service]
-Type=notify
-PrivateTmp=true
-WorkingDirectory=/etc/openvpn
-ExecStart=/usr/sbin/openvpn --status /run/openvpn/server.status 10 --cd /etc/openvpn --config /etc/openvpn/server.conf --writepid /run/openvpn/server.pid
-ExecReload=/bin/kill -HUP \$MAINPID
-CapabilityBoundingSet=CAP_IPC_LOCK CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_SETGID CAP_SETUID CAP_SYS_CHROOT CAP_DAC_OVERRIDE
-LimitNPROC=10
-DeviceAllow=/dev/null rw
-DeviceAllow=/dev/net/tun rw
-ProtectSystem=true
-ProtectHome=true
-KillMode=process
-RestartSec=5s
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-cat > /etc/systemd/system/openvpn-server@server2.service << EOF
-[Unit]
-Description=OpenVPN server for TCP 1194
-After=network.target
-
-[Service]
-Type=notify
-PrivateTmp=true
-WorkingDirectory=/etc/openvpn
-ExecStart=/usr/sbin/openvpn --status /run/openvpn/server2.status 10 --cd /etc/openvpn --config /etc/openvpn/server2.conf --writepid /run/openvpn/server2.pid
-ExecReload=/bin/kill -HUP \$MAINPID
-CapabilityBoundingSet=CAP_IPC_LOCK CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_SETGID CAP_SETUID CAP_SYS_CHROOT CAP_DAC_OVERRIDE
-LimitNPROC=10
-DeviceAllow=/dev/null rw
-DeviceAllow=/dev/net/tun rw
-ProtectSystem=true
-ProtectHome=true
-KillMode=process
-RestartSec=5s
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Fix server2.conf to listen on all interfaces
-sed -i '1i# Fixed to listen on all interfaces' /etc/openvpn/server2.conf
-sed -i '2ilocal 0.0.0.0' /etc/openvpn/server2.conf
-
+# Create auth scripts
 cat <<\EOM >/etc/openvpn/login/config.sh
 #!/bin/bash
 # config.sh - VPN server config
@@ -463,7 +443,7 @@ CONNECT_URL="https://breakawayvpn.co.uk/database/api/connect.php" # user connect
 DISCONNECT_URL="https://breakawayvpn.co.uk/database/api/disconnect.php" # user disconnect tracking
 EOM
 
-/bin/cat <<"EOM" >/etc/openvpn/login/auth_vpn
+cat <<'EOM' >/etc/openvpn/login/auth_vpn
 #!/bin/bash
 . /etc/openvpn/login/config.sh
 
@@ -475,11 +455,9 @@ if [ "$RESPONSE" = "ok" ]; then
 else
     exit 1   # fail
 fi
-
 EOM
 
-#client-connect file
-cat <<'LENZ05' >/etc/openvpn/login/connect.sh
+cat <<'EOM' >/etc/openvpn/login/connect.sh
 #!/bin/bash
 . /etc/openvpn/login/config.sh
 
@@ -489,10 +467,9 @@ DATENOW=$(date +"%Y-%m-%d %T")
 
 # Send user online status to PHP
 curl -s -d "username=$USERNAME&server_ip=$SERVER_IP&active_date=$DATENOW" "$CONNECT_URL"
-LENZ05
+EOM
 
-#TCP client-disconnect file
-cat <<'LENZ06' >/etc/openvpn/login/disconnect.sh
+cat <<'EOM' >/etc/openvpn/login/disconnect.sh
 #!/bin/bash
 . /etc/openvpn/login/config.sh
 
@@ -500,9 +477,10 @@ USERNAME="$common_name"
 
 # Send user offline status to PHP
 curl -s -d "username=$USERNAME" "$DISCONNECT_URL"
-LENZ06
+EOM
 
-cat << EOF > /etc/openvpn/easy-rsa/keys/ca.crt
+# Create certificates
+cat << 'EOF' > /etc/openvpn/easy-rsa/keys/ca.crt
 -----BEGIN CERTIFICATE-----
 MIICMTCCAZqgAwIBAgIUAaQBApMS2dYBqYPcA3Pa7cjjw7cwDQYJKoZIhvcNAQEL
 BQAwDzENMAsGA1UEAwwES29iWjAeFw0yMDA3MjIyMjIzMzNaFw0zMDA3MjAyMjIz
@@ -519,57 +497,7 @@ eDKMefDi0ZfiZmnU2njmTncyZKxv18Ikjws0Myc8PtAxy2qdcA==
 -----END CERTIFICATE-----
 EOF
 
-cat << EOF > /etc/openvpn/easy-rsa/keys/server.crt
-Certificate:
-    Data:
-        Version: 3 (0x2)
-        Serial Number:
-            40:26:da:91:18:2b:77:9c:85:6a:0c:bb:ca:90:53:fe
-        Signature Algorithm: sha256WithRSAEncryption
-        Issuer: CN=KobZ
-        Validity
-            Not Before: Jul 22 22:23:55 2020 GMT
-            Not After : Jul 20 22:23:55 2030 GMT
-        Subject: CN=server
-        Subject Public Key Info:
-            Public Key Algorithm: rsaEncryption
-                RSA Public-Key: (1024 bit)
-                Modulus:
-                    00:ce:35:23:d8:5d:9f:b6:9b:cb:6a:89:e1:90:af:
-                    42:df:5f:f8:bd:ad:a7:78:9a:ca:20:f0:3d:5b:d6:
-                    c9:ef:4c:4a:99:96:c3:38:fd:59:b4:d7:65:ed:d4:
-                    a7:fa:ab:03:e2:be:88:2f:ca:fc:90:dd:b0:b7:bc:
-                    23:cb:83:ac:36:e2:01:57:69:64:b8:e1:9e:51:f0:
-                    a6:9d:13:d9:92:6b:4d:04:a6:10:64:a3:3f:6b:ff:
-                    fe:32:ac:91:63:c2:71:24:be:9e:76:4f:87:cc:3a:
-                    03:a9:9e:48:3f:11:92:33:3b:19:16:9c:d0:5d:16:
-                    ee:c1:42:67:99:47:66:67:67
-                Exponent: 65537 (0x10001)
-        X509v3 extensions:
-            X509v3 Basic Constraints: 
-                CA:FALSE
-            X509v3 Subject Key Identifier: 
-                6B:08:C0:64:10:71:A8:32:7F:0B:FE:1E:98:1F:BD:72:74:0F:C8:66
-            X509v3 Authority Key Identifier: 
-                keyid:64:49:32:6F:FE:66:62:F1:57:4D:BB:91:A8:5D:BD:26:3E:51:A4:D2
-                DirName:/CN=KobZ
-                serial:01:A4:01:02:93:12:D9:D6:01:A9:83:DC:03:73:DA:ED:C8:E3:C3:B7
-
-            X509v3 Extended Key Usage: 
-                TLS Web Server Authentication
-            X509v3 Key Usage: 
-                Digital Signature, Key Encipherment
-            X509v3 Subject Alternative Name: 
-                DNS:server
-    Signature Algorithm: sha256WithRSAEncryption
-         a1:3e:ac:83:0b:e5:5d:ca:36:b7:d0:ab:d0:d9:73:66:d1:62:
-         88:ce:3d:47:9e:08:0b:a0:5b:51:13:fc:7e:d7:6e:17:0e:bd:
-         f5:d9:a9:d9:06:78:52:88:5a:e5:df:d3:32:22:4a:4b:08:6f:
-         b1:22:80:4f:19:d1:5f:9d:b6:5a:17:f7:ad:70:a9:04:00:ff:
-         fe:84:aa:e1:cb:0e:74:c0:1a:75:0b:3e:98:90:1d:22:ba:a4:
-         7a:26:65:7d:d1:3b:5c:45:a1:77:22:ed:b6:6b:18:a3:c4:ee:
-         3e:06:bb:0b:ec:12:ac:16:a5:50:b3:ed:46:43:87:72:fd:75:
-         8c:38
+cat << 'EOF' > /etc/openvpn/easy-rsa/keys/server.crt
 -----BEGIN CERTIFICATE-----
 MIICVDCCAb2gAwIBAgIQQCbakRgrd5yFagy7ypBT/jANBgkqhkiG9w0BAQsFADAP
 MQ0wCwYDVQQDDARLb2JaMB4XDTIwMDcyMjIyMjM1NVoXDTMwMDcyMDIyMjM1NVow
@@ -587,7 +515,7 @@ GKPE7j4GuwvsEqwWpVCz7UZDh3L9dYw4
 -----END CERTIFICATE-----
 EOF
 
-cat << EOF > /etc/openvpn/easy-rsa/keys/server.key
+cat << 'EOF' > /etc/openvpn/easy-rsa/keys/server.key
 -----BEGIN PRIVATE KEY-----
 MIICdQIBADANBgkqhkiG9w0BAQEFAASCAl8wggJbAgEAAoGBAM41I9hdn7aby2qJ
 4ZCvQt9f+L2tp3iayiDwPVvWye9MSpmWwzj9WbTXZe3Up/qrA+K+iC/K/JDdsLe8
@@ -606,7 +534,7 @@ JQbf7qSE3mg2
 -----END PRIVATE KEY-----
 EOF
 
-cat << EOF > /etc/openvpn/easy-rsa/keys/dh2048.pem
+cat << 'EOF' > /etc/openvpn/easy-rsa/keys/dh2048.pem
 -----BEGIN DH PARAMETERS-----
 MIGHAoGBAKqeBUWMYdj6+Z6kPVyQjm5Pc/nhSeczplV0AX/zJ5lL9TXRGNg+q/nK
 tQyaBpmBWAHxHP8j7NmRQaN6rpBkqHOtXJB9FT35xDvnAAaMxYW5RetBRUW7UnJ3
@@ -614,25 +542,26 @@ s1qQZ6kAUwIgDHzS9ykP9IzKPTbCrMIA/8kHfJ1qMfSDY8slKSVjAgEC
 -----END DH PARAMETERS-----
 EOF
 
+# Set permissions
 chmod 755 /etc/openvpn/server.conf
 chmod 755 /etc/openvpn/server2.conf
 chmod 755 /etc/openvpn/login/connect.sh
 chmod 755 /etc/openvpn/login/disconnect.sh
 chmod 755 /etc/openvpn/login/config.sh
 chmod 755 /etc/openvpn/login/auth_vpn
-
-# Enable and start OpenVPN services
-systemctl daemon-reload
-systemctl enable openvpn-server@server.service
-systemctl enable openvpn-server@server2.service
+chmod 600 /etc/openvpn/easy-rsa/keys/server.key
+chmod 644 /etc/openvpn/easy-rsa/keys/server.crt
+chmod 644 /etc/openvpn/easy-rsa/keys/ca.crt
 }&>/dev/null
 }
 
 install_stunnel() {
   {
+echo "Installing stunnel..."
 cd /etc/stunnel/
 
-echo "-----BEGIN PRIVATE KEY-----
+cat > stunnel.pem << 'EOF'
+-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQClmgCdm7RB2VWK
 wfH8HO/T9bxEddWDsB3fJKpM/tiVMt4s/WMdGJtFdRlxzUb03u+HT6t00sLlZ78g
 ngjxLpJGFpHAGdVf9vACBtrxv5qcrG5gd8k7MJ+FtMTcjeQm8kVRyIW7cOWxlpGY
@@ -679,35 +608,101 @@ RRFjvxFyeL4gtDlqb9hea62tep7+gCkeiccyp8+lmnS32rRtFa7PovmK5pUjkDOr
 dpvCQlKoCRjZ/+OfUaanzYQSDrxdTSN8RtJhCZtd45QbxEXzHTEaICXLuXL6cmv7
 tMuhgUoefS17gv1jqj/C9+6ogMVa+U7QqOvL5A7hbevHdF/k/TMn+qx4UdhrbL5Q
 enL3UGT+BhRAPiA1I5CcG29RqjCzQoaCNg==
------END CERTIFICATE-----" >> stunnel.pem
+-----END CERTIFICATE-----
+EOF
 
-echo "cert=/etc/stunnel/stunnel.pem
+cat > stunnel.conf << 'EOF'
+cert = /etc/stunnel/stunnel.pem
 socket = a:SO_REUSEADDR=1
 socket = l:TCP_NODELAY=1
 socket = r:TCP_NODELAY=1
 client = no
 
 [openvpn]
+accept = 443
 connect = 127.0.0.1:1194
-accept = 443" >> stunnel.conf
+EOF
 
-cd /etc/default && rm stunnel4
-
-echo 'ENABLED=1
+cat > /etc/default/stunnel4 << 'EOF'
+ENABLED=1
 FILES="/etc/stunnel/*.conf"
 OPTIONS=""
 PPP_RESTART=0
-RLIMITS=""' >> stunnel4 
+RLIMITS=""
+EOF
 
-chmod 755 stunnel4
-sudo service stunnel4 restart
+chmod 600 stunnel.pem
+chmod 644 stunnel.conf
+systemctl enable stunnel4
+systemctl restart stunnel4
   } &>/dev/null
 }
 
 install_iptables(){
   {
-echo -e "\033[01;31m Configure Sysctl \033[0m"
-echo 'fs.file-max = 51200
+echo "Configuring iptables and sysctl..."
+# Flush existing rules
+iptables -F
+iptables -X
+iptables -t nat -F
+iptables -t nat -X
+ip6tables -F
+ip6tables -X
+
+# Set default policies
+iptables -P INPUT DROP
+iptables -P FORWARD DROP
+iptables -P OUTPUT ACCEPT
+ip6tables -P INPUT DROP
+ip6tables -P FORWARD DROP
+ip6tables -P OUTPUT DROP
+
+# Allow loopback
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A OUTPUT -o lo -j ACCEPT
+
+# Allow established connections
+iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+# Allow SSH
+iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+
+# Allow OpenVPN ports
+iptables -A INPUT -p tcp --dport 1194 -j ACCEPT
+iptables -A INPUT -p udp --dport 443 -j ACCEPT
+iptables -A INPUT -p tcp --dport 443 -j ACCEPT  # stunnel
+
+# Allow proxy ports
+iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+iptables -A INPUT -p tcp --dport 3128 -j ACCEPT
+iptables -A INPUT -p tcp --dport 8080 -j ACCEPT
+
+# Allow UDP ports for proxy
+iptables -A INPUT -p udp --dport 20100:20900 -j ACCEPT
+
+# Rate limiting for UDP ports
+iptables -t filter -A INPUT -p udp -m udp --dport 20100:20900 -m state --state NEW -m recent --update --seconds 30 --hitcount 10 --name DEFAULT --mask 255.255.255.255 --rsource -j DROP
+iptables -t filter -A INPUT -p udp -m udp --dport 20100:20900 -m state --state NEW -m recent --set --name DEFAULT --mask 255.255.255.255 --rsource
+
+# NAT for OpenVPN clients
+iptables -t nat -A POSTROUTING -s 10.20.0.0/22 -o "$server_interface" -j MASQUERADE
+iptables -t nat -A POSTROUTING -s 10.30.0.0/22 -o "$server_interface" -j MASQUERADE
+
+# Allow forwarding for VPN traffic
+iptables -A FORWARD -s 10.20.0.0/22 -j ACCEPT
+iptables -A FORWARD -d 10.20.0.0/22 -j ACCEPT
+iptables -A FORWARD -s 10.30.0.0/22 -j ACCEPT
+iptables -A FORWARD -d 10.30.0.0/22 -j ACCEPT
+
+# Save rules
+iptables-save > /etc/iptables_rules.v4
+ip6tables-save > /etc/iptables_rules.v6
+
+# Configure sysctl
+cat > /etc/sysctl.conf << 'EOF'
+# Kernel sysctl configuration
+fs.file-max = 51200
 net.core.rmem_max = 67108864
 net.core.wmem_max = 67108864
 net.core.netdev_max_backlog = 250000
@@ -725,171 +720,202 @@ net.ipv4.tcp_mtu_probing = 1
 net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
 net.ipv4.ip_forward=1
-net.ipv4.icmp_echo_ignore_all = 1' >> /etc/sysctl.conf
-echo '* soft nofile 512000
-* hard nofile 512000' >> /etc/security/limits.conf
+net.ipv4.icmp_echo_ignore_all = 1
+EOF
+
+# Apply limits
+echo '* soft nofile 512000' >> /etc/security/limits.conf
+echo '* hard nofile 512000' >> /etc/security/limits.conf
 ulimit -n 512000
 
-# Flush existing iptables rules
-iptables -F
-iptables -X
-iptables -t nat -F
-iptables -t nat -X
-
-# Set default policies
-iptables -P INPUT ACCEPT
-iptables -P FORWARD ACCEPT
-iptables -P OUTPUT ACCEPT
-
-# Allow all loopback (lo0) traffic
-iptables -A INPUT -i lo -j ACCEPT
-iptables -A OUTPUT -o lo -j ACCEPT
-
-# Allow established connections
-iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-
-# Allow SSH
-iptables -A INPUT -p tcp --dport 22 -j ACCEPT
-
-# Allow OpenVPN ports
-iptables -A INPUT -p tcp --dport 1194 -j ACCEPT
-iptables -A INPUT -p udp --dport 443 -j ACCEPT
-iptables -A INPUT -p tcp --dport 443 -j ACCEPT
-
-# Allow proxy ports
-iptables -A INPUT -p tcp --dport 80 -j ACCEPT
-iptables -A INPUT -p tcp --dport 3128 -j ACCEPT
-iptables -A INPUT -p tcp --dport 8080 -j ACCEPT
-
-# Allow UDP ports for proxy
-iptables -A INPUT -p udp --dport 20100:20900 -j ACCEPT
-iptables -t filter -A INPUT -p udp -m udp --dport 20100:20900 -m state --state NEW -m recent --update --seconds 30 --hitcount 10 --name DEFAULT --mask 255.255.255.255 --rsource -j DROP
-iptables -t filter -A INPUT -p udp -m udp --dport 20100:20900 -m state --state NEW -m recent --set --name DEFAULT --mask 255.255.255.255 --rsource
-
-# NAT rules for OpenVPN
-iptables -t nat -A POSTROUTING -s 10.20.0.0/22 -o "$server_interface" -j MASQUERADE
-iptables -t nat -A POSTROUTING -s 10.20.0.0/22 -o "$server_interface" -j SNAT --to-source "$server_ip"
-iptables -t nat -A POSTROUTING -s 10.30.0.0/22 -o "$server_interface" -j MASQUERADE
-iptables -t nat -A POSTROUTING -s 10.30.0.0/22 -o "$server_interface" -j SNAT --to-source "$server_ip"
-
-# Save iptables rules
-iptables-save > /etc/iptables_rules.v4
-ip6tables-save > /etc/iptables_rules.v6
+# Apply sysctl
 sysctl -p
   }&>/dev/null
 }
 
 install_rclocal(){
   {
-    wget https://pastebin.com/raw/z9j2nA8p -O /etc/ubuntu
-    dos2unix /etc/ubuntu
-    chmod +x /etc/ubuntu    
-    screen -dmS socks python /etc/ubuntu
-    wget --no-check-certificate https://pastebin.com/raw/658HpnLd -O /etc/systemd/system/rc-local.service
-    
-    # Create rc.local with proper OpenVPN service startup
-    echo "#!/bin/sh -e
-service ufw stop
+echo "Configuring rc.local and startup scripts..."
+# Download socks proxy
+wget https://pastebin.com/raw/z9j2nA8p -O /etc/ubuntu
+dos2unix /etc/ubuntu
+chmod +x /etc/ubuntu
+
+# Create systemd service for socks
+cat > /etc/systemd/system/socks-proxy.service << 'EOF'
+[Unit]
+Description=SOCKS5 Proxy Server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python /etc/ubuntu
+Restart=always
+RestartSec=10
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Create rc.local
+cat > /etc/rc.local << 'EOF'
+#!/bin/bash
+# rc.local - startup script
+
+# Restore iptables
 iptables-restore < /etc/iptables_rules.v4
 ip6tables-restore < /etc/iptables_rules.v6
+
+# Apply sysctl
 sysctl -p
+
+# Start services
 service squid3 restart
 service stunnel4 restart
 
-# Start OpenVPN services
-systemctl start openvpn-server@server.service
-systemctl start openvpn-server@server2.service
+# Start OpenVPN manually to ensure it runs
+if ! pgrep -f "openvpn.*server2.conf" > /dev/null; then
+    echo "Starting OpenVPN TCP server..."
+    /usr/sbin/openvpn --daemon --config /etc/openvpn/server2.conf --log /var/log/openvpn-tcp.log
+fi
 
-# Wait for OpenVPN to start
+if ! pgrep -f "openvpn.*server.conf" > /dev/null; then
+    echo "Starting OpenVPN UDP server..."
+    /usr/sbin/openvpn --daemon --config /etc/openvpn/server.conf --log /var/log/openvpn-udp.log
+fi
+
+# Start SOCKS proxy via systemd
+systemctl start socks-proxy.service
+
+# Wait a bit
 sleep 3
 
-# Check if OpenVPN services are running
-if systemctl is-active --quiet openvpn-server@server.service; then
-    echo 'OpenVPN UDP server is running'
-else
-    echo 'Starting OpenVPN UDP server...'
-    /usr/sbin/openvpn --daemon --config /etc/openvpn/server.conf
-fi
+# Check if services are running
+echo "Checking services..."
+netstat -tlnp | grep -E '(1194|443)' || echo "Warning: OpenVPN may not be listening"
 
-if systemctl is-active --quiet openvpn-server@server2.service; then
-    echo 'OpenVPN TCP server is running'
-else
-    echo 'Starting OpenVPN TCP server...'
-    /usr/sbin/openvpn --daemon --config /etc/openvpn/server2.conf
-fi
+exit 0
+EOF
 
-screen -dmS socks python /etc/ubuntu
-exit 0" > /etc/rc.local
-    
-    sudo chmod +x /etc/rc.local
-    sudo systemctl enable rc-local
-    sudo systemctl start rc-local.service
+chmod +x /etc/rc.local
+
+# Create systemd rc-local service
+cat > /etc/systemd/system/rc-local.service << 'EOF'
+[Unit]
+Description=/etc/rc.local Compatibility
+ConditionPathExists=/etc/rc.local
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/etc/rc.local start
+TimeoutSec=0
+StandardOutput=tty
+RemainAfterExit=yes
+SysVStartPriority=99
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl enable rc-local
+systemctl enable socks-proxy.service
+systemctl start rc-local
   }&>/dev/null
+}
+
+start_openvpn_manually() {
+    echo "Starting OpenVPN servers manually..."
+    
+    # Kill any existing OpenVPN processes
+    pkill -f openvpn
+    
+    # Start UDP server (port 443)
+    echo "Starting UDP server on port 443..."
+    /usr/sbin/openvpn --daemon --config /etc/openvpn/server.conf --log /var/log/openvpn-udp.log
+    
+    # Start TCP server (port 1194)
+    echo "Starting TCP server on port 1194..."
+    /usr/sbin/openvpn --daemon --config /etc/openvpn/server2.conf --log /var/log/openvpn-tcp.log
+    
+    sleep 3
+    
+    echo "Checking OpenVPN processes..."
+    ps aux | grep openvpn | grep -v grep
+    
+    echo "Checking listening ports..."
+    netstat -tlnp | grep -E '(1194|443)'
+    netstat -ulnp | grep 443
 }
 
 install_done()
 {
-  # Start OpenVPN services
-  systemctl start openvpn-server@server.service
-  systemctl start openvpn-server@server2.service
+  echo "Finalizing installation..."
   
-  # Give services time to start
+  # Start OpenVPN manually first
+  start_openvpn_manually
+  
+  # Run rc.local
+  /etc/rc.local
+  
+  # Wait for services to start
   sleep 5
-  
-  # Check if services are running
-  echo "Checking OpenVPN services..."
-  if systemctl is-active --quiet openvpn-server@server.service; then
-    echo "✓ OpenVPN UDP server is running"
-  else
-    echo "✗ OpenVPN UDP server failed to start"
-    echo "Trying to start manually..."
-    /usr/sbin/openvpn --daemon --config /etc/openvpn/server.conf
-  fi
-  
-  if systemctl is-active --quiet openvpn-server@server2.service; then
-    echo "✓ OpenVPN TCP server is running"
-  else
-    echo "✗ OpenVPN TCP server failed to start"
-    echo "Trying to start manually..."
-    /usr/sbin/openvpn --daemon --config /etc/openvpn/server2.conf
-  fi
-  
-  # Check listening ports
-  echo ""
-  echo "Checking listening ports..."
-  echo "TCP Port 1194: $(netstat -tlnp | grep ':1194' || echo 'Not listening')"
-  echo "UDP Port 443: $(netstat -ulnp | grep ':443' || echo 'Not listening')"
-  echo "TCP Port 443 (stunnel): $(netstat -tlnp | grep ':443' | grep stunnel || echo 'Not listening')"
   
   clear
   echo "=========================================="
   echo "OPENVPN SERVER FIRENET - INSTALLATION COMPLETE"
   echo "=========================================="
-  echo "Server IP : $(curl -s https://api.ipify.org)"
+  echo "Server IP : $server_ip"
+  echo "Server Interface : $server_interface"
   echo "------------------------------------------"
-  echo "OPENVPN TCP port : 1194"
-  echo "OPENVPN UDP port : 443"
-  echo "OPENVPN SSL port : 443 (via stunnel)"
-  echo "SOCKS port : 80"
-  echo "PROXY port : 3128"
-  echo "PROXY port : 8080"
+  echo "SERVICES:"
+  echo "  OpenVPN TCP : port 1194"
+  echo "  OpenVPN UDP : port 443"
+  echo "  OpenVPN SSL : port 443 (via stunnel)"
+  echo "  SOCKS proxy : port 80"
+  echo "  HTTP Proxy  : ports 3128, 8080"
   echo "=========================================="
   echo ""
-  echo "To check OpenVPN status:"
-  echo "  systemctl status openvpn-server@server.service"
-  echo "  systemctl status openvpn-server@server2.service"
+  echo "CHECKING SERVICES:"
   echo ""
-  echo "To check listening ports:"
-  echo "  netstat -tlnp | grep -E '(1194|443)'"
-  echo "  netstat -ulnp | grep 443"
+  
+  # Check OpenVPN processes
+  echo "OpenVPN Processes:"
+  ps aux | grep openvpn | grep -v grep || echo "  No OpenVPN processes found"
+  
+  echo ""
+  echo "Listening Ports:"
+  echo "TCP 1194: $(netstat -tlnp | grep ':1194' | awk '{print $4 " - " $7}' || echo 'Not listening')"
+  echo "UDP 443: $(netstat -ulnp | grep ':443' | awk '{print $4 " - " $6}' || echo 'Not listening')"
+  echo "TCP 443: $(netstat -tlnp | grep ':443' | grep -v ':1194' | awk '{print $4 " - " $7}' || echo 'Not listening')"
+  
+  echo ""
+  echo "Iptables Rules for 1194:"
+  iptables -L INPUT -n | grep 1194 || echo "  No rule found"
+  
+  echo ""
+  echo "DEBUG INFO:"
+  echo "To test connection from client:"
+  echo "  nc -zv $server_ip 1194"
+  echo "  nc -zvu $server_ip 443"
+  echo ""
+  echo "View OpenVPN logs:"
+  echo "  tail -f /var/log/openvpn-tcp.log"
+  echo "  tail -f /var/log/openvpn-udp.log"
+  echo ""
+  echo "If TCP 1194 is not listening, run:"
+  echo "  /usr/sbin/openvpn --daemon --config /etc/openvpn/server2.conf"
   echo ""
   history -c;
 }
 
-# Main execution
+# Get server info
 server_interface=$(ip route get 8.8.8.8 | awk '/dev/ {f=NR} f&&NR-1==f' RS=" ")
 server_ip=$(curl -s https://api.ipify.org)
 
+# Main installation
+echo "Starting installation on $server_ip ($server_interface)"
 install_require
 install_squid
 install_openvpn
@@ -897,3 +923,14 @@ install_stunnel
 install_iptables
 install_rclocal
 install_done
+
+# Run debug info
+debug_info
+
+# Final check
+echo ""
+echo "=== FINAL CONNECTION TEST ==="
+echo "Testing TCP port 1194..."
+timeout 3 bash -c "</dev/tcp/$server_ip/1194" && echo "✓ TCP 1194 is open" || echo "✗ TCP 1194 is closed"
+echo "Testing UDP port 443..."
+timeout 3 bash -c "</dev/udp/$server_ip/443" && echo "✓ UDP 443 is reachable" || echo "✗ UDP 443 may be blocked"
