@@ -1,11 +1,4 @@
 #!/bin/bash
-cp /usr/share/zoneinfo/Asia/Riyadh /etc/localtime
-#Database Details
-HOST='92.113.22.123';
-USER='hello';
-PASS='hello';
-DBNAME='hello';
-
 install_require()
 {
   clear
