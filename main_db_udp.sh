@@ -378,9 +378,9 @@ cat <<\EOM >/etc/openvpn/login/config.sh
 #!/bin/bash
 # config.sh - VPN server config
 
-AUTH_URL="https://panel.venomvpn.co.uk/database/api/auth.php"       # authentication
-CONNECT_URL="https://panel.venomvpn.co.uk/database/api/connect.php" # user connect tracking
-DISCONNECT_URL="https://panel.venomvpn.co.uk/database/api/disconnect.php" # user disconnect tracking
+AUTH_URL="https://panel.onebesthost.com/database/api/auth.php"       # authentication
+CONNECT_URL="https://panel.onebesthost.com/database/api/connect.php" # user connect tracking
+DISCONNECT_URL="https://panel.onebesthost.com/database/api/disconnect.php" # user disconnect tracking
 EOM
 
 sed -i "s|DBHOST|$HOST|g" /etc/openvpn/login/config.sh
