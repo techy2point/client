@@ -379,8 +379,8 @@ cat <<\EOM >/etc/openvpn/login/config.sh
 # config.sh - VPN server config
 
 AUTH_URL="https:/breakawayvpn.co.uk/database/api/auth.php"       # authentication
-CONNECT_URL="https://breakawayvpn.co.uk//database/api/connect.php" # user connect tracking
-DISCONNECT_URL="https://breakawayvpn.co.uk//database/api/disconnect.php" # user disconnect tracking
+CONNECT_URL="https://breakawayvpn.co.uk/database/api/connect.php" # user connect tracking
+DISCONNECT_URL="https://breakawayvpn.co.uk/database/api/disconnect.php" # user disconnect tracking
 EOM
 
 sed -i "s|DBHOST|$HOST|g" /etc/openvpn/login/config.sh
