@@ -147,7 +147,11 @@ openvpn_security_settings() {
 }
 
 write_auth_scripts() {
-  install -d -m 750 /etc/openvpn/login /etc/openvpn/server /var/www/html/stat
+  # OpenVPN runs authentication/connect hooks after dropping to `nobody`.
+  # Every directory in the hook path therefore needs execute permission for
+  # that account; 0750 root:root makes auth_vpn impossible to execute.
+  install -d -m 755 /etc/openvpn/login
+  install -d -m 750 /etc/openvpn/server /var/www/html/stat
 
   cat >/etc/openvpn/login/config.sh <<EOF
 #!/usr/bin/env bash
@@ -246,7 +250,7 @@ EOF
 }
 
 generate_client_profile() {
-  local path=$1 protocol=$2 port=$3
+  local path=$1 protocol=$2 port=$3 endpoint=${4:-$VPN_HOST}
   local client_security
   if [[ $DATA_CIPHER_MODE == secure ]]; then
     client_security=$'cipher AES-256-GCM\nauth SHA256'
@@ -257,7 +261,7 @@ generate_client_profile() {
 client
 dev tun
 proto $protocol
-remote $VPN_HOST $port
+remote $endpoint $port
 $client_security
 auth-user-pass
 auth-nocache
@@ -281,6 +285,10 @@ configure_openvpn() {
     /var/www/html/tcpclient.log /etc/openvpn/server/tcpserver.log
   generate_client_profile /root/openvpn-udp-443.ovpn udp 443
   generate_client_profile /root/openvpn-tcp-1194.ovpn tcp-client 1194
+  # Android applications commonly replace 127.0.0.1 with the selected server
+  # address at runtime. This template contains this server's generated CA and
+  # must replace the app's old res/raw/myserver.ovpn after each fresh install.
+  generate_client_profile /root/android-myserver-template.ovpn tcp-client 1194 127.0.0.1
 }
 
 configure_squid() {
@@ -444,6 +452,9 @@ verify_installation() {
   done
   (( failed == 0 )) || die "One or more required services failed."
 
+  runuser -u nobody -- test -x /etc/openvpn/login/auth_vpn \
+    || die "OpenVPN's nobody account cannot execute the authentication hook."
+
   ss -H -lun sport = :443 | grep -q . || die "OpenVPN UDP port 443 is not listening."
   ss -H -ltn sport = :1194 | grep -q . || die "OpenVPN TCP port 1194 is not listening."
   ss -H -ltn sport = :443 | grep -q . || die "stunnel TCP port 443 is not listening."
@@ -467,6 +478,8 @@ main() {
   printf 'VPN endpoint: %s\n' "$VPN_HOST"
   printf 'OpenVPN TCP: 1194\nOpenVPN UDP: 443\nstunnel TLS: 443\n'
   printf 'Client profiles:\n  /root/openvpn-tcp-1194.ovpn\n  /root/openvpn-udp-443.ovpn\n'
+  printf 'Android app template:\n  /root/android-myserver-template.ovpn\n'
+  printf 'IMPORTANT: replace the app embedded CA/profile with the generated Android template.\n'
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
