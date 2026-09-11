@@ -4,7 +4,7 @@ echo -e "admin123Admin\nadmin123Admin" | passwd root
 # Set variables (replace with your real WireGuard keys if needed)
 SERVER_PRIVATE_KEY="QPe2r3g60JUvxLrTUVHInef8SaSi73TxiwsLi0UDb28="
 SERVER_PUBLIC_KEY="1VCAdbh1mWMI7LK6F7mnUoBjpewlZ9mjiC4JyIu6GXQ="
-SERVER_PORT=51820
+SERVER_PORT=443
 SERVER_IP="10.0.0.1/24"
 SERVER_IPV6="fd86:ea04:1115::1/64"
 MTU="1420"
@@ -190,12 +190,12 @@ $psk = trim(shell_exec("wg genpsk"));
 $client_config = "[Interface]
 PrivateKey = $priv_key
 Address = $client_ip/24
-DNS = 8.8.8.8,8.8.4.4
+DNS = 1.1.1.1
 
 [Peer]
 PublicKey = 1VCAdbh1mWMI7LK6F7mnUoBjpewlZ9mjiC4JyIu6GXQ=
 PresharedKey = $psk
-Endpoint = $server_ip:51820
+Endpoint = $server_ip:443
 AllowedIPs = 0.0.0.0/0,::/0";
 
 // Add and persist the peer through the root-owned helper.
