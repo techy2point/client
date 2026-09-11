@@ -84,7 +84,7 @@ sleep 5
 sudo bash <<'END_SCRIPT'
 # Update system and install dependencies
 apt update -y
-apt install -y apache2 php php-curl php-json wireguard qrencode curl wget
+apt install -y apache2 libapache2-mod-php php php-curl php-json wireguard qrencode curl wget
 
 # Configure WireGuard directory and permissions
 mkdir -p /etc/wireguard/keys
