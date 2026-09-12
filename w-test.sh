@@ -23,6 +23,33 @@ echo $SERVER_PUB_NIC > /root/domain
 WAN_IFACE=$(ip route | grep '^default' | awk '{print $5}' | head -n1)
 if [ -z "$WAN_IFACE" ]; then WAN_IFACE="eth0"; fi
 
+# Some VPS images are delivered with an empty or broken resolver configuration.
+# Repair it before contacting Ubuntu mirrors, while preserving a working
+# provider-supplied resolver whenever one already exists.
+ensure_dns() {
+    getent ahostsv4 archive.ubuntu.com >/dev/null 2>&1 && return 0
+
+    echo "DNS resolution is unavailable; applying fallback resolvers..." >&2
+    if command -v resolvconf >/dev/null 2>&1 && [ -d /etc/resolvconf/resolv.conf.d ]; then
+        printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolvconf/resolv.conf.d/base
+        resolvconf -u || true
+    elif command -v resolvectl >/dev/null 2>&1 && systemctl is-active --quiet systemd-resolved; then
+        resolvectl dns "$WAN_IFACE" 1.1.1.1 8.8.8.8 || true
+        resolvectl domain "$WAN_IFACE" '~.' || true
+    else
+        [ -e /etc/resolv.conf ] && cp -L /etc/resolv.conf /etc/resolv.conf.pre-wireguard 2>/dev/null || true
+        rm -f /etc/resolv.conf
+        printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf
+    fi
+
+    getent ahostsv4 archive.ubuntu.com >/dev/null 2>&1 || {
+        echo "DNS resolution is still unavailable. Check the provider network firewall." >&2
+        return 1
+    }
+}
+
+ensure_dns || exit 1
+
 # Save variables
 mkdir -p /etc/wireguard
 echo "SERVER_PUB_NIC=$SERVER_PUB_NIC
@@ -50,7 +77,7 @@ apt_with_lock_retry() {
 }
 
 apt_with_lock_retry update || exit 1
-apt_with_lock_retry install -y wireguard iptables resolvconf qrencode apache2 libapache2-mod-php php php-curl php-json curl ufw dos2unix || exit 1
+apt_with_lock_retry install -y wireguard iptables qrencode apache2 libapache2-mod-php php php-curl php-json curl ufw dos2unix || exit 1
 
 # Enable IP forwarding
 echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
@@ -200,19 +227,27 @@ if (file_exists($client_conf_path)) {
 // providers that use NAT, so prefer an external IPv4 check and then fall back.
 $server_ip = trim(shell_exec("curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org"));
 if (!filter_var($server_ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+    $server_ip = trim(shell_exec('hostname -I | cut -d " " -f1'));
+}
+/* Superseded route fallback kept inside this comment for compatibility notes.
+if (!filter_var($server_ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
     $server_ip = trim(shell_exec('ip route get 1.1.1.1 | awk \\'{print $7}\\' | tr -d "\\n"'));
 }
 if (!filter_var($server_ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
     http_response_code(503);
     exit("Server public endpoint unavailable");
 }
-/* Legacy route-first lookup retained below for reference.
+Legacy route-first lookup retained below for reference.
 $server_ip = shell_exec('ip route get 1 | awk \'{print $7}\' | tr -d "\n"');
 if (empty($server_ip)) {
     $server_ip = trim(shell_exec("curl -4 -s icanhazip.com"));
 }
 
 */
+if (!filter_var($server_ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+    http_response_code(503);
+    exit("Server public endpoint unavailable");
+}
 // Calculate next IP
 $last_ip = shell_exec("grep -E '^AllowedIPs = 10\\.0\\.0\\.[0-9]+/32$' $wg_config | tail -n1 | awk '{print \$3}' | cut -d '.' -f 4 | cut -d '/' -f1");
 $next_ip = $last_ip ? intval($last_ip) + 1 : 2;
@@ -272,7 +307,7 @@ wg-quick up wg0
 
 # Display completion message
 echo "WireGuard API successfully deployed!"
-echo "Access URL: http://$(curl -4s icanhazip.com)/wp"
+echo "Access URL: http://$(curl -4s icanhazip.com)/wireguard-api/?device_id=test123"
 echo "Rebooting in 5 seconds..."
 sleep 5
 reboot
