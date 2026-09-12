@@ -84,13 +84,17 @@ sleep 5
 sudo bash <<'END_SCRIPT'
 # Update system and install dependencies
 apt update -y
-apt install -y apache2 libapache2-mod-php php php-curl php-json wireguard qrencode curl wget
+apt install -y apache2 php php-curl php-json wireguard qrencode curl wget
 
 # Configure WireGuard directory and permissions
 mkdir -p /etc/wireguard/keys
 chmod 700 /etc/wireguard/keys
 touch /etc/wireguard/wg0.conf
-chmod 600 /etc/wireguard/wg0.conf
+# Let Apache's www-data group read the peer list so the PHP API can allocate
+# the next unused client IP. The file remains inaccessible to other users.
+chown root:www-data /etc/wireguard /etc/wireguard/wg0.conf
+chmod 2750 /etc/wireguard
+chmod 640 /etc/wireguard/wg0.conf
 
 # Root-owned helper used by the API to add one validated peer and persist it.
 cat > /usr/local/sbin/wireguard-add-peer <<'PEER_HELPER'
