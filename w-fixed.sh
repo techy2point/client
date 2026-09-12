@@ -239,7 +239,7 @@ wg-quick up wg0
 
 # Display completion message
 echo "WireGuard API successfully deployed!"
-echo "Access URL: http://$(curl -4s icanhazip.com)/wireguard-api/?device_id=test123"
+echo "Access URL: http://$(curl -4s icanhazip.com)/wg"
 echo "Rebooting in 5 seconds..."
 sleep 5
 reboot
