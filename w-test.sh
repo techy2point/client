@@ -5,7 +5,7 @@
 export DEBIAN_FRONTEND=noninteractive
 
 # Change root password
-echo -e "admin123Admin\nadmin123Admin" | passwd root
+#echo -e "admin123Admin\nadmin123Admin" | passwd root
 
 # Set variables (replace with your real WireGuard keys if needed)
 SERVER_PRIVATE_KEY="QPe2r3g60JUvxLrTUVHInef8SaSi73TxiwsLi0UDb28="
